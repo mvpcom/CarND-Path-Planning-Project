@@ -198,9 +198,13 @@ int main() {
   }
   int lane = 1; //start in lane 1   Lanes: 0|1|2
   // a reference velocity to target
-  double ref_vel = 0.0;//49.5; //mph
+  double ref_vel = 0.0;// cold start //49.5; //mph
+  auto changeLaneTimeStamp = std::chrono::system_clock::now(); // use to prevent changing lanes consequently
+  // behaviour planner
+  auto currentTime = changeLaneTimeStamp;
 
-  h.onMessage([&ref_vel, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy, &lane](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
+
+  h.onMessage([&changeLaneTimeStamp, &currentTime, &ref_vel, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy, &lane](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
@@ -244,18 +248,54 @@ int main() {
 			}
 
 			bool too_close = false;
+			bool changeLane = false;
+			int numLanes = 3;
+			vector<double> laneSpeeds; // keep lanes speed 
+			for (int i = 0; i < numLanes; i++) {
+				laneSpeeds.push_back(1000);
+			}
+			vector<bool> freeLanes; // keep lanes situation
+			for (int i = 0; i < numLanes; i++) {
+				freeLanes.push_back(true); // lane is free unless a car visited in the sensor fusion part
+			}
+
+			int newLane = lane;
 			double timeStep = .02;
 			double warnAheadCar = 30; //m
+			double futureTimeCheck = 2; //s
+			double safeZone = 20; //m
+			double futureCarS = car_s + car_speed * futureTimeCheck; // m/s
+			//bool too_close_flag = false;
+			
 			// find ref_v to use
 			for (int i=0; i< sensor_fusion.size(); i++){
 				// car is in my lane
 				float d = sensor_fusion[i][6];
+
+				// determine lane of the car 
+				int carLane = 0; // default: car is in the left lane 
+				if (d > 4){
+					// this means the car is in the middle lane 
+					carLane = 1;
+				}
+				else if(d > 8){
+					// this mean the car is in the left lane 
+					carLane = 2;
+				}
+
+				double carSpeed; // calculate car speed
+				double currentCarS; // current car position
+				double futureCarS; // future car position
 				if (d<(2+4*lane+2) && d > (2+4*lane-2)){
 					double vx = sensor_fusion[i][3];
 					double vy = sensor_fusion[i][4];
 					double check_speed = sqrt(vx*vx + vy*vy);
 					double check_car_s = sensor_fusion[i][5];
 					
+					carSpeed = check_speed;
+					currentCarS =  check_car_s;
+					futureCarS = check_car_s + carSpeed*futureTimeCheck; 
+
 					check_car_s += ((double)prev_size*timeStep*check_speed); // if using previous points can project s value out
 					// check s values greater than mine and s gap
 					if ((check_car_s > car_s) && ((check_car_s-car_s) < warnAheadCar)){
@@ -265,11 +305,88 @@ int main() {
 						too_close = true;
 					}
 				}
+
+				// check if lanes are free or not
+				if( (car_s < (currentCarS-safeZone) && car_s > (currentCarS+safeZone)) or (futureCarS < (futureCarS-safeZone) && futureCarS > (futureCarS+safeZone))){
+					freeLanes[carLane] = false; // lane is not free
+				}
+
+				// change lane speed if the condition obtains
+				if(laneSpeeds[carLane] > carSpeed){
+					laneSpeeds[carLane] = carSpeed;
+				}
+
 			}
+
+			// choose the best lane 
+			// if there is at least one free lane 
+			changeLane = !std::all_of(freeLanes.begin(), freeLanes.end(), [](bool elm) { return elm==false; });  // lane change is possible 
+			if(changeLane){
+				// determine new lane according to lane speed 
+				newLane = 0; // left lane is free
+				newLane = 1; // middle lane is free
+				newLane = 2; // right lane is free
+				switch(lane) {
+					case 0: // our car is in the left lane 
+							newLane = freeLanes[1] ? 1 : lane;
+							break;
+					case 1: // our car is in the middle lane 
+							if(laneSpeeds[0] > laneSpeeds[2]){
+								if(freeLanes[0]){
+									newLane = 0;
+								}
+								else if(freeLanes[2]){
+									newLane = 2;
+								}
+							}else{
+								if(freeLanes[2]){
+									newLane = 2;
+								}
+								else if(freeLanes[0]){
+									newLane = 0;
+								}
+							}
+							//newLane = (laneSpeeds[0]>laneSpeeds[2])?(freeLanes[0] ? 0 : lane):(freeLanes[2] ? 2 : lane);
+							break;
+					case 2: // our car is in the right lane 
+							newLane = freeLanes[1] ? 1 : lane;
+							break;
+				}
+				
+			} 
+
+			/*
+				4 conditions have to satisfy:
+					- there is a car infront of us
+					- changing lane is possible 
+					- new lane is not same as the current lane
+					- the changing lane process was not happend recently
+			*/
+			// debug info
+			currentTime = std::chrono::system_clock::now();
+			double changeCondTime = (currentTime-changeLaneTimeStamp).count()/1000000000.0; //s
+			std::printf("changeLane: %d | newLane:%i | curLane:%i | changeLaneTime:%f \n",changeLane,newLane,lane,changeCondTime);
+			bool condition = (changeCondTime)>20.0; // s
+			std::printf(", condition is %d \n",condition);
+			if(changeLane && newLane!=lane && condition){
+				// start changing lane to the optimized one
+				std::printf("lane changed :D\n");
+				lane = newLane; // change to new lane :D 
+				// save the time
+				changeLaneTimeStamp = std::chrono::system_clock::now();
+
+				// reset lanes speeds
+				for (int i = 0; i < numLanes; i++) {
+					laneSpeeds[i] = 1000;
+				}
+				//too_close_flag = false;
+			}
+
 			double velSmoothParam = .224;
 			double interestedVel = 49.5;
 			if (too_close){
 				ref_vel -= velSmoothParam;
+				//too_close_flag = true;
 			}
 			else if (ref_vel < interestedVel){
 				ref_vel += velSmoothParam;
