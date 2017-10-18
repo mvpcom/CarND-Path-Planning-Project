@@ -263,8 +263,8 @@ int main() {
 			double timeStep = .02;
 			double warnAheadCar = 30; //m
 			double futureTimeCheck = 2; //s
-			double safeZone = 20; //m
-			double futureCarS = car_s + car_speed * futureTimeCheck; // m/s
+			double safeZone = 15; //m
+			double futureCarEgoS = car_s + car_speed * futureTimeCheck; // m/s
 			//bool too_close_flag = false;
 			
 			// find ref_v to use
@@ -274,11 +274,12 @@ int main() {
 
 				// determine lane of the car 
 				int carLane = 0; // default: car is in the left lane 
-				if (d > 4){
+				
+				if (d > 4.0){
 					// this means the car is in the middle lane 
 					carLane = 1;
 				}
-				else if(d > 8){
+				if(d > 8.0){
 					// this mean the car is in the left lane 
 					carLane = 2;
 				}
@@ -286,16 +287,15 @@ int main() {
 				double carSpeed; // calculate car speed
 				double currentCarS; // current car position
 				double futureCarS; // future car position
-				if (d<(2+4*lane+2) && d > (2+4*lane-2)){
-					double vx = sensor_fusion[i][3];
-					double vy = sensor_fusion[i][4];
-					double check_speed = sqrt(vx*vx + vy*vy);
-					double check_car_s = sensor_fusion[i][5];
-					
-					carSpeed = check_speed;
-					currentCarS =  check_car_s;
-					futureCarS = check_car_s + carSpeed*futureTimeCheck; 
 
+				double vx = sensor_fusion[i][3];
+				double vy = sensor_fusion[i][4];
+				double check_speed = sqrt(vx*vx + vy*vy);
+				double check_car_s = sensor_fusion[i][5];
+				carSpeed = check_speed;
+				currentCarS =  check_car_s;
+				futureCarS = check_car_s + carSpeed*futureTimeCheck; 
+				if (d<(2+4*lane+2) && d > (2+4*lane-2)){
 					check_car_s += ((double)prev_size*timeStep*check_speed); // if using previous points can project s value out
 					// check s values greater than mine and s gap
 					if ((check_car_s > car_s) && ((check_car_s-car_s) < warnAheadCar)){
@@ -306,8 +306,12 @@ int main() {
 					}
 				}
 
+				
+				//std::printf("CarLane: %d, CarD: %f, CarEgoS: %f, OtherCarS:%f, OtherCarS-SafeZone:%f\n",carLane,d,car_s,currentCarS,(currentCarS-safeZone));
+				
 				// check if lanes are free or not
-				if( (car_s < (currentCarS-safeZone) && car_s > (currentCarS+safeZone)) or (futureCarS < (futureCarS-safeZone) && futureCarS > (futureCarS+safeZone))){
+				//TODO: add future position of car: or ((futureCarEgoS-safeZone/2) < futureCarS && (futureCarEgoS+safeZone/2) > futureCarS+safeZone)
+				if( ((car_s-2*safeZone) < currentCarS && (car_s+safeZone) > currentCarS) ){
 					freeLanes[carLane] = false; // lane is not free
 				}
 
@@ -355,22 +359,24 @@ int main() {
 				
 			} 
 
+			// debug info
+			currentTime = std::chrono::system_clock::now();
+			double changeCondTime = (currentTime-changeLaneTimeStamp).count()/1000000000.0; //s
+			std::printf("Free Lanes: %d, %d, %d\n", (bool)freeLanes[0], (bool)freeLanes[1],  (bool)freeLanes[2]);
+			std::printf("changeLane: %d | newLane:%i | curLane:%i | changeLaneTime:%f \n",changeLane,newLane,lane,changeCondTime);
+			bool condition = (changeCondTime)>5.0; // s
+			//std::printf(", condition is %d \n",condition);
+			
 			/*
-				4 conditions have to satisfy:
-					- there is a car infront of us
+				3/4 conditions have to satisfy:
+					*- there is a car infront of us
 					- changing lane is possible 
 					- new lane is not same as the current lane
 					- the changing lane process was not happend recently
 			*/
-			// debug info
-			currentTime = std::chrono::system_clock::now();
-			double changeCondTime = (currentTime-changeLaneTimeStamp).count()/1000000000.0; //s
-			std::printf("changeLane: %d | newLane:%i | curLane:%i | changeLaneTime:%f \n",changeLane,newLane,lane,changeCondTime);
-			bool condition = (changeCondTime)>20.0; // s
-			std::printf(", condition is %d \n",condition);
-			if(changeLane && newLane!=lane && condition){
+			if(too_close && changeLane && newLane!=lane && condition){
 				// start changing lane to the optimized one
-				std::printf("lane changed :D\n");
+				//std::printf("lane changed :D\n");
 				lane = newLane; // change to new lane :D 
 				// save the time
 				changeLaneTimeStamp = std::chrono::system_clock::now();
@@ -379,7 +385,13 @@ int main() {
 				for (int i = 0; i < numLanes; i++) {
 					laneSpeeds[i] = 1000;
 				}
+
+				too_close = false;
 				//too_close_flag = false;
+			}
+			//reset lane believe
+			for (int i = 0; i < numLanes; i++) {
+				freeLanes[i] = true; // lane is free again
 			}
 
 			double velSmoothParam = .224;
