@@ -9,6 +9,7 @@
 #include "Eigen-3.3/Eigen/QR"
 #include "json.hpp"
 #include "spline.h"
+#include <time.h> // for fixing the mac problem
 
 using namespace std;
 
@@ -199,10 +200,12 @@ int main() {
   int lane = 1; //start in lane 1   Lanes: 0|1|2
   // a reference velocity to target
   double ref_vel = 0.0;// cold start //49.5; //mph
-  auto changeLaneTimeStamp = std::chrono::system_clock::now(); // use to prevent changing lanes consequently
+  //auto changeLaneTimeStamp = std::chrono::system_clock::now(); // use to prevent changing lanes consequently
   // behaviour planner
+  //auto currentTime = changeLaneTimeStamp;
+  // Fix: for mac os 
+  auto changeLaneTimeStamp = clock();
   auto currentTime = changeLaneTimeStamp;
-
 
   h.onMessage([&changeLaneTimeStamp, &currentTime, &ref_vel, &map_waypoints_x,&map_waypoints_y,&map_waypoints_s,&map_waypoints_dx,&map_waypoints_dy, &lane](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
@@ -360,8 +363,9 @@ int main() {
 			} 
 
 			// debug info
-			currentTime = std::chrono::system_clock::now();
-			double changeCondTime = (currentTime-changeLaneTimeStamp).count()/1000000000.0; //s
+			//currentTime = std::chrono::system_clock::now(); // there is problem with mac os
+			currentTime = clock();
+			double changeCondTime = (currentTime-changeLaneTimeStamp)/10000;//.count()/1000000000.0; //s
 			std::printf("Free Lanes: %d, %d, %d\n", (bool)freeLanes[0], (bool)freeLanes[1],  (bool)freeLanes[2]);
 			std::printf("changeLane: %d | newLane:%i | curLane:%i | changeLaneTime:%f \n",changeLane,newLane,lane,changeCondTime);
 			bool condition = (changeCondTime)>5.0; // s
@@ -379,7 +383,7 @@ int main() {
 				//std::printf("lane changed :D\n");
 				lane = newLane; // change to new lane :D 
 				// save the time
-				changeLaneTimeStamp = std::chrono::system_clock::now();
+				changeLaneTimeStamp = clock();//std::chrono::system_clock::now();
 
 				// reset lanes speeds
 				for (int i = 0; i < numLanes; i++) {
